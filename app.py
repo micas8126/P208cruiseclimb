@@ -25,24 +25,21 @@ def format_time(hours):
     return f"{h}:{m:02d} h"
 
 def interpolate_climb(alt_diff, weight, temp):
-    # Filter nach Gewicht
     weights = sorted(climb_df["Weight [kg]"].unique())
     nearest_weights = sorted(weights, key=lambda x: abs(x - weight))[:2]
 
-    # Für beide Gewichte interpolieren
     results = []
     for w in nearest_weights:
-        df_w = climb_df[climb_df["Weight [kg]"] == w]
+        df_w = climb_df[climb_df["Weight [kg]"] == w].copy()
         df_w["Pressure Altitude [ft]"] = df_w["Pressure Altitude [ft]"].replace("S.L.", 0).astype(int)
         df_w = df_w.sort_values("Pressure Altitude [ft]")
 
-        # Interpolation über Altitude
         climb_points = df_w[df_w["Pressure Altitude [ft]"] <= alt_diff]
         if climb_points.empty:
             continue
         last_row = climb_points.iloc[-1]
 
-        temp_cols = [col for col in df_w.columns if "ROC" in col]
+        temp_cols = [col for col in df_w.columns if "ROC" in col and "ISA" not in col]
         temp_values = [float(col.split("@")[1].replace("°C", "").strip()) for col in temp_cols]
         roc_values = last_row[temp_cols].values.astype(float)
         roc_interp = np.interp(temp, temp_values, roc_values)
@@ -58,7 +55,6 @@ def interpolate_climb(alt_diff, weight, temp):
     vy = np.interp(weight, [w1, w2], [vy1, vy2])
     roc = np.interp(weight, [w1, w2], [roc1, roc2])
 
-    # Zeit in Stunden und geschätzte Climb-Distanz
     time_hr = alt_diff / roc / 60
     distance_nm = vy * time_hr * 60 / 6076.12
     fuel_lph = 27  # angenommener Mittelwert
@@ -77,7 +73,6 @@ else:
     if remaining_distance <= 0:
         st.error("Distanz zu kurz für Cruise nach Climb.")
     else:
-        # Cruise Interpolation
         rpm_df = df[df["Propeller RPM"] == rpm]
         altitudes = sorted(rpm_df["Pressure Altitude [ft]"].unique())
         lower_alts = [alt for alt in altitudes if alt <= target_altitude]
@@ -125,4 +120,3 @@ else:
             st.write("---")
             st.write(f"**Gesamtdauer:** {format_time(total_time)}")
             st.write(f"**Gesamtverbrauch:** {total_fuel:.1f} Liter")
-
