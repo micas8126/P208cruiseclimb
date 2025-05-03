@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import math
 
 # Daten laden
 df = pd.read_csv("tecnam_cruise_performance.csv")
@@ -8,7 +9,7 @@ climb_df = pd.read_csv("tecnam_climb_performance_corrected.csv")
 
 # UI
 st.title("Tecnam P2008 JC – Cruise + Climb Kalkulation")
-st.markdown("Berechnung von **Flugzeit** und **Kraftstoffverbrauch** inkl. Interpolation über Flughöhe, RPM, Temperatur, Gewicht und Steigflug")
+st.markdown("Berechnung von **Flugzeit** und **Kraftstoffverbrauch** inkl. Climb, Gewicht, Temperatur, Wind und Interpolation")
 
 # Eingaben
 distance = st.number_input("Gesamtdistanz [NM]", min_value=10.0, step=1.0)
@@ -16,13 +17,30 @@ airfield_altitude = st.number_input("Startplatz Pressure Altitude [ft]", min_val
 target_altitude = st.number_input("Reiseflug Pressure Altitude [ft]", min_value=0, max_value=10000, step=100)
 rpm = st.selectbox("Propeller RPM", sorted(df["Propeller RPM"].unique()))
 weight = st.number_input("Tatsächliches Gewicht [kg]", min_value=550, max_value=650, step=1)
-temperature = st.number_input("Außentemperatur (OAT) [°C]", value=15)
+temp_airfield = st.number_input("Außentemperatur am Startplatz [°C]", value=15.0)
 
-# Funktionen
+tack = st.number_input("Track (Kursrichtung) [°]", min_value=0, max_value=360, step=1)
+wind_dir = st.number_input("Windrichtung (woher) [°]", min_value=0, max_value=360, step=1)
+wind_speed = st.number_input("Windstärke [kt]", min_value=0.0, step=0.5)
+
+alternate_distance = st.number_input("Alternate Distanz [NM]", min_value=0.0, step=1.0)
+additional_fuel = st.number_input("Zusätzlicher Kraftstoff [l]", min_value=0.0, step=0.5)
+
+# Temperatur berechnen auf Reiseflughöhe
+lapse_rate = 2
+delta_alt = target_altitude - airfield_altitude
+temperature = temp_airfield - (delta_alt / 1000) * lapse_rate
+st.markdown(f"**Berechnete Temperatur auf Reiseflughöhe:** {temperature:.1f} °C")
+
+# Hilfsfunktionen
 def format_time(hours):
     h = int(hours)
     m = int(round((hours - h) * 60))
     return f"{h}:{m:02d} h"
+
+def wind_component(track, wind_dir, wind_speed):
+    angle = math.radians(wind_dir - track)
+    return wind_speed * math.cos(angle)
 
 def interpolate_climb(alt_diff, weight, temp):
     weights = sorted(climb_df["Weight [kg]"].unique())
@@ -109,20 +127,46 @@ else:
             ktas_final = ktas_weight_corr * ktas_corr_percent
             fuel_final = fuel_flow * fuel_corr_percent
 
-            time_cruise = remaining_distance / ktas_final
+            wind_corr = wind_component(tack, wind_dir, wind_speed)
+            wind_type = "(Gegenwind +)" if wind_corr < 0 else "(Rückenwind -)"
+            gs_final = max(ktas_final + wind_corr, 30)
+
+            time_cruise = remaining_distance / gs_final
             fuel_cruise = time_cruise * fuel_final
 
-            total_time = time_cruise + climb_time
-            total_fuel = fuel_cruise + climb_fuel
+            # Fixe Zusatzverbräuche
+            fuel_departure = 2.0
+            fuel_landing = 1.0
+            fuel_reserve = 45 / 60 * fuel_final
+
+            # Alternate Berechnung: 600 kg, 2000 RPM, 4000 ft
+            alt_df = df[(df["Propeller RPM"] == 2000) & (df["Pressure Altitude [ft]"] == 4000)]
+            if not alt_df.empty:
+                row = alt_df.iloc[0]
+                alt_speed = row["KTAS"] * (1 + 0.033 * (650 - 600) / 100)
+                alt_flow = row["Fuel Consumption [l/hr]"]
+                alt_time = alternate_distance / alt_speed
+                alt_fuel = alt_time * alt_flow
+            else:
+                alt_time = 0
+                alt_fuel = 0
+
+            total_time = time_cruise + climb_time + alt_time
+            total_fuel = fuel_cruise + climb_fuel + fuel_departure + fuel_landing + fuel_reserve + additional_fuel + alt_fuel
 
             h = int(total_time)
             m = int(round((total_time - h) * 60))
 
             st.success("Ergebnisse")
             st.write(f"**ISA Temp @ Alt:** {isa_temp:.1f} °C  |  **OAT-Abweichung:** {isa_dev:+.1f} °C")
+            st.write(f"**Windkomponente:** {wind_corr:.1f} kt {wind_type}")
             st.write(f"**Climb:** {format_time(climb_time)}, {climb_dist:.1f} NM, {climb_fuel:.1f} l")
-            st.write(f"**Cruise KTAS:** {ktas_final:.1f} kt  |  Fuel Flow: {fuel_final:.2f} l/h")
+            st.write(f"**Cruise GS:** {gs_final:.1f} kt  |  Fuel Flow: {fuel_final:.2f} l/h")
             st.write(f"**Cruise:** {format_time(time_cruise)}, {fuel_cruise:.1f} l")
+            st.write("---")
+            st.write(f"**Alternate:** {format_time(alt_time)}, {alt_fuel:.1f} l")
+            st.write(f"**Start:** {fuel_departure:.1f} l | Landung: {fuel_landing:.1f} l | Reserve: {fuel_reserve:.1f} l")
+            st.write(f"**Zusätzlich:** {additional_fuel:.1f} l")
             st.write("---")
             st.write(f"**Gesamtdauer:** {format_time(total_time)}")
             st.write(f"**Gesamtverbrauch:** {total_fuel:.1f} Liter")
