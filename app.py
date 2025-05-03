@@ -57,7 +57,7 @@ def interpolate_climb(alt_diff, weight, temp):
 
     time_hr = alt_diff / roc / 60
     distance_nm = vy * time_hr * 60 / 6076.12
-    fuel_lph = 27  # angenommener Mittelwert
+    fuel_lph = 27
     fuel = time_hr * fuel_lph
 
     return time_hr, distance_nm, fuel
@@ -84,17 +84,23 @@ else:
             alt_low = max(lower_alts)
             alt_high = min(upper_alts)
 
-            row_low = rpm_df[rpm_df["Pressure Altitude [ft]"] == alt_low].iloc[0]
-            row_high = rpm_df[rpm_df["Pressure Altitude [ft]"] == alt_high].iloc[0]
+            if alt_low == alt_high:
+                row = rpm_df[rpm_df["Pressure Altitude [ft]"] == alt_low].iloc[0]
+                ktas = row["KTAS"]
+                fuel_flow = row["Fuel Consumption [l/hr]"]
+                isa_temp = row["OAT ISA [°C]"]
+            else:
+                row_low = rpm_df[rpm_df["Pressure Altitude [ft]"] == alt_low].iloc[0]
+                row_high = rpm_df[rpm_df["Pressure Altitude [ft]"] == alt_high].iloc[0]
 
-            def interp(val_low, val_high):
-                return np.interp(target_altitude, [alt_low, alt_high], [val_low, val_high])
+                def interp(val_low, val_high):
+                    return np.interp(target_altitude, [alt_low, alt_high], [val_low, val_high])
 
-            ktas = interp(row_low["KTAS"], row_high["KTAS"])
-            fuel_flow = interp(row_low["Fuel Consumption [l/hr]"], row_high["Fuel Consumption [l/hr]"])
-            isa_temp = interp(row_low["OAT ISA [°C]"], row_high["OAT ISA [°C]"])
+                ktas = interp(row_low["KTAS"], row_high["KTAS"])
+                fuel_flow = interp(row_low["Fuel Consumption [l/hr]"], row_high["Fuel Consumption [l/hr]"])
+                isa_temp = interp(row_low["OAT ISA [°C]"], row_high["OAT ISA [°C]"])
+
             isa_dev = temperature - isa_temp
-
             ktas_corr_percent = np.interp(isa_dev, [-15, 0, 15], [1.01, 1.0, 0.98])
             fuel_corr_percent = np.interp(isa_dev, [-15, 0, 15], [1.03, 1.0, 0.975])
 
