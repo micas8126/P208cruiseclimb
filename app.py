@@ -14,7 +14,15 @@ def isa_temperature(alt_ft):
 # Cruise Interpolation
 
 def interpolate_cruise(df, alt_ft, rpm, oat, weight):
-    subset = df[(df["Pressure Altitude [ft]"] == alt_ft) & (df["Propeller RPM"] == rpm)]
+    alts = sorted(df["Pressure Altitude [ft]"].unique())
+    lower_alt = max([a for a in alts if a <= alt_ft], default=min(alts))
+    upper_alt = min([a for a in alts if a >= alt_ft], default=max(alts))
+    s_low = df[(df["Pressure Altitude [ft]"] == lower_alt) & (df["Propeller RPM"] == rpm)]
+    s_up = df[(df["Pressure Altitude [ft]"] == upper_alt) & (df["Propeller RPM"] == rpm)]
+    if s_low.empty or s_up.empty:
+        return None, None
+    base_speed = np.interp(alt_ft, [lower_alt, upper_alt], [s_low["KTAS"].values[0], s_up["KTAS"].values[0]])
+    base_fuel = np.interp(alt_ft, [lower_alt, upper_alt], [s_low["Fuel Consumption [l/hr]"].values[0], s_up["Fuel Consumption [l/hr]"].values[0]])
     if subset.empty:
         return None, None
     base_speed = float(subset["KTAS"].values[0])
