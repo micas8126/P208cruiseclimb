@@ -1,172 +1,114 @@
-import streamlit as st
 import pandas as pd
 import numpy as np
-import math
+import streamlit as st
 
 # Daten laden
-df = pd.read_csv("tecnam_cruise_performance.csv")
+cruise_df = pd.read_csv("tecnam_cruise_performance.csv")
 climb_df = pd.read_csv("tecnam_climb_performance_corrected.csv")
 
-# UI
-st.title("Tecnam P2008 JC – Cruise + Climb Kalkulation")
-st.markdown("Berechnung von **Flugzeit** und **Kraftstoffverbrauch** inkl. Climb, Gewicht, Temperatur, Wind und Interpolation")
+st.title("P2008 JC Cruise & Climb Calculator")
 
 # Eingaben
+weight = st.number_input("Abfluggewicht [kg]", min_value=550, max_value=650, value=600)
 distance = st.number_input("Gesamtdistanz [NM]", min_value=10.0, step=1.0)
-airfield_altitude = st.number_input("Startplatz Pressure Altitude [ft]", min_value=0, max_value=10000, step=100)
-target_altitude = st.number_input("Reiseflug Pressure Altitude [ft]", min_value=0, max_value=10000, step=100)
-rpm = st.selectbox("Propeller RPM", sorted(df["Propeller RPM"].unique()))
-weight = st.number_input("Tatsächliches Gewicht [kg]", min_value=550, max_value=650, step=1)
-temp_airfield = st.number_input("Außentemperatur am Startplatz [°C]", value=15.0)
+airfield_alt = st.number_input("Airfield Pressure Altitude [ft]", step=100)
+cruise_alt = st.number_input("Reiseflughöhe (Pressure Altitude) [ft]", step=100)
+temp_surface = st.number_input("Außentemperatur am Startplatz [°C]", value=15.0)
+prop_rpm = st.selectbox("Propeller RPM", sorted(cruise_df['Propeller RPM'].unique(), reverse=True))
+track = st.number_input("Track (Kursrichtung) [°]", min_value=0, max_value=360, value=180)
+wind_direction = st.number_input("Windrichtung (woher) [°]", min_value=0, max_value=360, value=360)
+wind_speed = st.number_input("Windstärke [kt]", min_value=0.0, value=10.0)
+alternate_dist = st.number_input("Alternate Distanz [NM]", min_value=0.0, value=0.0)
+additional_fuel = st.number_input("Zusätzlicher Kraftstoff [l]", min_value=0.0, value=0.0)
 
-tack = st.number_input("Track (Kursrichtung) [°]", min_value=0, max_value=360, step=1)
-wind_dir = st.number_input("Windrichtung (woher) [°]", min_value=0, max_value=360, step=1)
-wind_speed = st.number_input("Windstärke [kt]", min_value=0.0, step=0.5)
+# Temperatur auf Reiseflughöhe berechnen (ISA - 2°C pro 1000 ft)
+isa_temp = 15 - (2 * cruise_alt / 1000)
+oat_at_alt = temp_surface - (2 * (cruise_alt - airfield_alt) / 1000)
+oat_deviation = oat_at_alt - isa_temp
+st.markdown(f"**Berechnete Temperatur auf Reiseflughöhe:** {oat_at_alt:.1f} °C")
 
-alternate_distance = st.number_input("Alternate Distanz [NM]", min_value=0.0, step=1.0)
-additional_fuel = st.number_input("Zusätzlicher Kraftstoff [l]", min_value=0.0, step=0.5)
-
-# Temperatur berechnen auf Reiseflughöhe
-lapse_rate = 2
-delta_alt = target_altitude - airfield_altitude
-temperature = temp_airfield - (delta_alt / 1000) * lapse_rate
-st.markdown(f"**Berechnete Temperatur auf Reiseflughöhe:** {temperature:.1f} °C")
-
-# Hilfsfunktionen
-def format_time(hours):
-    h = int(hours)
-    m = int(round((hours - h) * 60))
-    return f"{h}:{m:02d} h"
-
-def wind_components(track, wind_from, wind_speed):
-    angle = math.radians((wind_from - track + 360) % 360)  # Korrekt gerechnet als von-woher
-    headwind = wind_speed * math.cos(angle)
-    crosswind = wind_speed * math.sin(angle)
-    return headwind, crosswind
-
-def interpolate_climb(alt_diff, weight, temp):
-    weights = sorted(climb_df["Weight [kg]"].unique())
-    nearest_weights = sorted(weights, key=lambda x: abs(x - weight))[:2]
-
-    results = []
-    for w in nearest_weights:
-        df_w = climb_df[climb_df["Weight [kg]"] == w].copy()
-        df_w["Pressure Altitude [ft]"] = df_w["Pressure Altitude [ft]"].replace("S.L.", 0).astype(int)
-        df_w = df_w.sort_values("Pressure Altitude [ft]")
-
-        climb_points = df_w[df_w["Pressure Altitude [ft]"] <= alt_diff]
-        if climb_points.empty:
-            continue
-        last_row = climb_points.iloc[-1]
-
-        temp_cols = [col for col in df_w.columns if "ROC" in col and "ISA" not in col]
-        temp_values = [float(col.split("@")[1].replace("°C", "").strip()) for col in temp_cols]
-        roc_values = last_row[temp_cols].values.astype(float)
-        roc_interp = np.interp(temp, temp_values, roc_values)
-
-        results.append((w, last_row["Climb Speed Vy [KIAS]"], roc_interp))
-
-    if len(results) < 2:
-        return 0, 0, 0
-
-    w1, vy1, roc1 = results[0]
-    w2, vy2, roc2 = results[1]
-
-    vy = np.interp(weight, [w1, w2], [vy1, vy2])
-    roc = np.interp(weight, [w1, w2], [roc1, roc2])
-
-    time_hr = alt_diff / roc / 60
-    distance_nm = vy * time_hr * 60 / 6076.12
-    fuel_lph = 27
-    fuel = time_hr * fuel_lph
-
-    return time_hr, distance_nm, fuel
-
-# Climb Berechnung
-alt_diff = target_altitude - airfield_altitude
-if alt_diff < 0:
-    st.error("Zielhöhe muss über Startplatz liegen.")
+# Interpolation Cruise
+subset = cruise_df[(cruise_df['Pressure Altitude [ft]'] == cruise_alt) & (cruise_df['Propeller RPM'] == prop_rpm)]
+if subset.empty:
+    st.error("Keine passenden Cruise-Daten gefunden.")
 else:
-    climb_time, climb_dist, climb_fuel = interpolate_climb(alt_diff, weight, temperature)
-    remaining_distance = distance - climb_dist
+    speeds = subset['KTAS'].values
+    fuels = subset['Fuel Consumption [l/hr]'].values
+    weights = np.full_like(speeds, 650)  # Basisgewicht
 
-    if remaining_distance <= 0:
-        st.error("Distanz zu kurz für Cruise nach Climb.")
+    # Gewichtskorrektur: +3.3% TAS je -100 kg
+    weight_diff = 650 - weight
+    speed_corr = speeds * (1 + (0.033 * weight_diff / 100))
+
+    # Temperaturkorrektur
+    temp_corr = speed_corr * (1 + (0.01 * oat_deviation / 15))
+    fuel_corr = fuels * (1 + (-0.025 * oat_deviation / 15))
+
+    cruise_speed = np.mean(temp_corr)
+    fuel_flow = np.mean(fuel_corr)
+
+    # Windkorrektur
+    wind_rad = np.radians(wind_direction)
+    track_rad = np.radians(track)
+    rel_angle = wind_rad - track_rad
+    headwind = wind_speed * np.cos(rel_angle)
+    crosswind = wind_speed * np.sin(rel_angle)
+    gs = cruise_speed + headwind
+
+    # Climb interpolieren
+    climb_alt = cruise_alt - airfield_alt
+    climb_segment = climb_df[climb_df['Delta Altitude [ft]'] == climb_alt]
+    if climb_segment.empty:
+        st.warning("Keine passenden Climb-Daten.")
+        climb_time = climb_dist = climb_fuel = 0.0
     else:
-        rpm_df = df[df["Propeller RPM"] == rpm]
-        altitudes = sorted(rpm_df["Pressure Altitude [ft]"].unique())
-        lower_alts = [alt for alt in altitudes if alt <= target_altitude]
-        upper_alts = [alt for alt in altitudes if alt >= target_altitude]
+        climb_weights = climb_segment['Weight [kg]'].values
+        climb_temps = climb_segment.columns[3:].astype(float)
 
-        if not lower_alts or not upper_alts:
-            st.error("Nicht genug Daten für Cruise-Interpolation.")
-        else:
-            alt_low = max(lower_alts)
-            alt_high = min(upper_alts)
+        # Interpolation Climb Zeit, Distanz, Fuel
+        climb_time_vals = []
+        climb_dist_vals = []
+        climb_fuel_vals = []
+        for col in climb_temps:
+            climb_time_vals.append(np.interp(weight, climb_weights, climb_segment[str(col)].values))
+            climb_dist_vals.append(np.interp(weight, climb_weights, climb_segment[str(col) + '_Dist'].values))
+            climb_fuel_vals.append(np.interp(weight, climb_weights, climb_segment[str(col) + '_Fuel'].values))
 
-            if alt_low == alt_high:
-                row = rpm_df[rpm_df["Pressure Altitude [ft]"] == alt_low].iloc[0]
-                ktas = row["KTAS"]
-                fuel_flow = row["Fuel Consumption [l/hr]"]
-                isa_temp = row["OAT ISA [°C]"]
-            else:
-                row_low = rpm_df[rpm_df["Pressure Altitude [ft]"] == alt_low].iloc[0]
-                row_high = rpm_df[rpm_df["Pressure Altitude [ft]"] == alt_high].iloc[0]
+        climb_time = np.interp(oat_at_alt, climb_temps, climb_time_vals) / 60
+        climb_dist = np.interp(oat_at_alt, climb_temps, climb_dist_vals)
+        climb_fuel = np.interp(oat_at_alt, climb_temps, climb_fuel_vals)
 
-                def interp(val_low, val_high):
-                    return np.interp(target_altitude, [alt_low, alt_high], [val_low, val_high])
+    remaining_dist = distance - climb_dist
+    time_cruise = remaining_dist / gs
+    fuel_cruise = time_cruise * fuel_flow
 
-                ktas = interp(row_low["KTAS"], row_high["KTAS"])
-                fuel_flow = interp(row_low["Fuel Consumption [l/hr]"], row_high["Fuel Consumption [l/hr]"])
-                isa_temp = interp(row_low["OAT ISA [°C]"], row_high["OAT ISA [°C]"])
+    # Alternate fix: 600kg, 2000 RPM, 4000 ft
+    alt_subset = cruise_df[(cruise_df['Pressure Altitude [ft]'] == 4000) & (cruise_df['Propeller RPM'] == 2000)]
+    if alt_subset.empty:
+        alt_time = alt_fuel = 0.0
+    else:
+        alt_speed = alt_subset[alt_subset['KTAS'] == alt_subset['KTAS'].max()].iloc[0]['KTAS']
+        alt_flow = alt_subset[alt_subset['KTAS'] == alt_subset['KTAS'].max()].iloc[0]['Fuel Consumption [l/hr]']
+        alt_time = alternate_dist / alt_speed
+        alt_fuel = alt_time * alt_flow
 
-            isa_dev = temperature - isa_temp
-            ktas_corr_percent = np.interp(isa_dev, [-15, 0, 15], [1.01, 1.0, 0.98])
-            fuel_corr_percent = np.interp(isa_dev, [-15, 0, 15], [1.03, 1.0, 0.975])
+    # Fixe Komponenten
+    fuel_departure = 2.0
+    fuel_landing = 1.0
+    fuel_reserve = 45 * fuel_flow / 60
 
-            delta_weight = 650 - weight
-            ktas_weight_corr = ktas * (1 + 0.033 * (delta_weight / 100))
-            ktas_final = ktas_weight_corr * ktas_corr_percent
-            fuel_final = fuel_flow * fuel_corr_percent
+    total_time = climb_time + time_cruise + alt_time
+    total_fuel = climb_fuel + fuel_cruise + alt_fuel + fuel_departure + fuel_landing + fuel_reserve + additional_fuel
 
-            headwind, crosswind = wind_components(tack, wind_dir, wind_speed)
-            wind_type = "(Gegenwind +)" if headwind < 0 else "(Rückenwind -)"
-            gs_final = max(ktas_final + headwind, 30)
-
-            time_cruise = remaining_distance / gs_final
-            fuel_cruise = time_cruise * fuel_final
-
-            fuel_departure = 2.0
-            fuel_landing = 1.0
-            fuel_reserve = 45 / 60 * fuel_final
-
-            alt_df = df[(df["Propeller RPM"] == 2000) & (df["Pressure Altitude [ft]"] == 4000)]
-            if not alt_df.empty:
-                row = alt_df.iloc[0]
-                alt_speed = row["KTAS"] * (1 + 0.033 * (650 - 600) / 100)
-                alt_flow = row["Fuel Consumption [l/hr]"]
-                alt_time = alternate_distance / alt_speed
-                alt_fuel = alt_time * alt_flow
-            else:
-                alt_time = 0
-                alt_fuel = 0
-
-            total_time = time_cruise + climb_time + alt_time
-            total_fuel = fuel_cruise + climb_fuel + fuel_departure + fuel_landing + fuel_reserve + additional_fuel + alt_fuel
-
-            h = int(total_time)
-            m = int(round((total_time - h) * 60))
-
-            st.success("Ergebnisse")
-            st.write(f"**ISA Temp @ Alt:** {isa_temp:.1f} °C  |  **OAT-Abweichung:** {isa_dev:+.1f} °C")
-            st.write(f"**Windkomponente:** {headwind:.1f} kt {wind_type}, Seitenwind: {crosswind:.1f} kt")
-            st.write(f"**Climb:** {format_time(climb_time)}, {climb_dist:.1f} NM, {climb_fuel:.1f} l")
-            st.write(f"**Cruise GS:** {gs_final:.1f} kt  |  Fuel Flow: {fuel_final:.2f} l/h")
-            st.write(f"**Cruise:** {format_time(time_cruise)}, {fuel_cruise:.1f} l")
-            st.write("---")
-            st.write(f"**Alternate:** {format_time(alt_time)}, {alt_fuel:.1f} l")
-            st.write(f"**Start:** {fuel_departure:.1f} l | Landung: {fuel_landing:.1f} l | Reserve: {fuel_reserve:.1f} l")
-            st.write(f"**Zusätzlich:** {additional_fuel:.1f} l")
-            st.write("---")
-            st.write(f"**Gesamtdauer:** {format_time(total_time)}")
-            st.write(f"**Gesamtverbrauch:** {total_fuel:.1f} Liter")
+    st.success("Ergebnisse")
+    st.markdown(f"**ISA Temp @ Alt:** {isa_temp:.1f} °C | **OAT-Abweichung:** {oat_deviation:+.1f} °C")
+    st.markdown(f"**Windkomponente:** {abs(headwind):.1f} kt ({'Gegenwind +' if headwind > 0 else 'Rückenwind -'}) | **Seitenwind:** {abs(crosswind):.1f} kt")
+    st.markdown(f"**Climb:** {climb_time:.2f} h, {climb_dist:.1f} NM, {climb_fuel:.1f} l")
+    st.markdown(f"**Cruise GS:** {gs:.1f} kt | Fuel Flow: {fuel_flow:.2f} l/h")
+    st.markdown(f"**Cruise:** {time_cruise:.2f} h, {remaining_dist:.1f} NM, {fuel_cruise:.1f} l")
+    st.markdown(f"**Alternate:** {alt_time:.2f} h, {alt_fuel:.1f} l")
+    st.markdown("---")
+    st.markdown(f"**Zusätze:** Start: {fuel_departure:.1f} l | Landung: {fuel_landing:.1f} l | Reserve: {fuel_reserve:.1f} l | Extra: {additional_fuel:.1f} l")
+    st.markdown("---")
+    st.markdown(f"**Gesamtdauer:** {total_time:.2f} h")
+    st.markdown(f"**Gesamtverbrauch:** {total_fuel:.1f} l")
