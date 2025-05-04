@@ -8,17 +8,17 @@ climb_df = pd.read_csv("tecnam_climb_performance_corrected.csv")
 
 # Hilfsfunktionen
 def interpolate_climb(alt_ft, weight, temp):
-    levels = climb_df["Altitude [ft]"].unique()
+    levels = climb_df["Pressure Altitude [ft]"].unique()
     if alt_ft > max(levels):
         st.error("Zielhöhe außerhalb des gültigen Bereichs der Tabelle.")
         return None, None, None
 
-    matching_rows = climb_df[climb_df["Altitude [ft]"] <= alt_ft]
+    matching_rows = climb_df[climb_df["Pressure Altitude [ft]"] <= alt_ft]
     if matching_rows.empty:
         st.error("Keine passenden Climb-Daten gefunden.")
         return None, None, None
 
-    grouped = climb_df.groupby("Altitude [ft]")
+    grouped = climb_df.groupby("Pressure Altitude [ft]")
     alts = sorted(grouped.groups.keys())
     roc_list = []
     for alt in alts:
