@@ -38,33 +38,50 @@ def calc_wind_component(track, wind_dir, wind_speed):
 
 hwc, cwc = calc_wind_component(track, wind_dir, wind_speed)
 
-# Climb-Interpolation (nach Höhe, Gewicht, Temperatur)
+# Climb-Interpolation (robust nach zwei nächstliegenden Gewichten)
 def interpolate_climb(alt_ft, weight, temp):
-    climb_subset = climb_df[np.isclose(climb_df["Weight [kg]"], weight, atol=100)]
-    if len(climb_subset) == 0:
+    weights_available = sorted(climb_df["Weight [kg]"].unique())
+    nearest_weights = sorted(weights_available, key=lambda x: abs(x - weight))[:2]
+    results = []
+
+    for w in nearest_weights:
+        df_w = climb_df[climb_df["Weight [kg]"] == w]
+        if df_w.empty:
+            continue
+
+        temp_cols = [col for col in df_w.columns if col.startswith("Rate @")]
+        temp_vals = [float(col.split("@")[1].replace("°C", "").strip()) for col in temp_cols]
+        alts = sorted(df_w["Pressure Altitude [ft]"].unique())
+        if not alts or alt_ft > max(alts):
+            continue
+
+        rates = []
+        for tcol in temp_cols:
+            sub = df_w[["Pressure Altitude [ft]", tcol]].dropna()
+            if len(sub) < 2:
+                continue
+            roc = np.interp(alt_ft, sub["Pressure Altitude [ft]"], sub[tcol])
+            rates.append(roc)
+
+        if len(rates) != len(temp_vals):
+            continue
+
+        roc_interp = np.interp(temp, temp_vals, rates)
+        time_hr = alt_ft / roc_interp / 60
+        dist_nm = time_hr * 90
+        fuel_l = time_hr * 20
+        results.append((w, time_hr, dist_nm, fuel_l))
+
+    if len(results) < 2:
         return None, None, None
 
-    temp_cols = [col for col in climb_subset.columns if col.startswith("Rate @")]
-    temp_vals = [float(col.split("@")[1].replace("°C", "").strip()) for col in temp_cols]
-    altitudes = sorted(climb_subset["Pressure Altitude [ft]"].unique())
-    if alt_ft > max(altitudes):
-        return None, None, None
+    w1, t1, d1, f1 = results[0]
+    w2, t2, d2, f2 = results[1]
+    climb_time = np.interp(weight, [w1, w2], [t1, t2])
+    climb_dist = np.interp(weight, [w1, w2], [d1, d2])
+    climb_fuel = np.interp(weight, [w1, w2], [f1, f2])
 
-    # Interpolieren des Rate of Climb
-    rates = []
-    for tcol in temp_cols:
-        sub = climb_subset[["Pressure Altitude [ft]", tcol]].dropna()
-        roc = np.interp(alt_ft, sub["Pressure Altitude [ft]"], sub[tcol])
-        rates.append(roc)
-
-    roc_interp = np.interp(temp, temp_vals, rates)
-    if roc_interp <= 0:
-        return None, None, None
-
-    time_hr = alt_ft / roc_interp / 60
-    dist_nm = time_hr * 90  # Annahme GS während climb 90kt
-    fuel_l = time_hr * 20  # Verbrauch geschätzt mit 20 l/h
-    return time_hr, dist_nm, fuel_l
+    return climb_time, climb_dist, climb_fuel
 
 # Cruise-Interpolation
 cruise_subset = cruise_df[cruise_df["Propeller RPM"] == prop_rpm]
@@ -91,7 +108,7 @@ else:
         # Korrekturen für Temperatur
         isa_temp = 15 + (-2 * target_alt / 1000)
         oat_dev = temp_at_alt - isa_temp
-        ktas_corr = ktas_interp * (1 + oat_dev * 0.01)  # grobe Näherung
+        ktas_corr = ktas_interp * (1 + oat_dev * 0.01)
         fuel_corr = fuel_flow_interp * (1 + oat_dev * 0.025)
 
         # Windkorrektur
@@ -123,3 +140,4 @@ else:
             st.markdown("---")
             st.write(f"**Totalzeit:** {total_time:.2f} h")
             st.write(f"**Totalverbrauch:** {total_fuel:.1f} l")
+
