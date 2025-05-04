@@ -84,33 +84,36 @@ def interpolate_climb(alt_ft, weight, temp):
 
     return climb_time, climb_dist, climb_fuel
 
-# Cruise-Interpolation
+# Cruise-Interpolation über Höhe mit Zwischenwerten
 cruise_subset = cruise_df[cruise_df["Propeller RPM"] == prop_rpm]
 
 if len(cruise_subset) == 0:
     st.error("Keine passenden Cruise-Daten gefunden. RPM prüfen.")
 else:
-    grouped = cruise_subset.groupby("Pressure Altitude [ft]")
-    altitudes = sorted(grouped.groups.keys())
-    if target_alt < min(altitudes) or target_alt > max(altitudes):
+    cruise_grouped = cruise_subset.groupby("Pressure Altitude [ft]")
+    cruise_alts = sorted(cruise_grouped.groups.keys())
+
+    if target_alt < min(cruise_alts) or target_alt > max(cruise_alts):
         st.error("Zielhöhe außerhalb des gültigen Bereichs der Tabelle.")
     else:
-        speeds = []
-        fuels = []
-        for alt in altitudes:
-            row = cruise_subset[cruise_subset["Pressure Altitude [ft]"] == alt]
-            ktas = row["KTAS"].mean()
-            fuel = row["Fuel Consumption [l/hr]"].mean()
-            speeds.append(ktas)
-            fuels.append(fuel)
-        ktas_interp = np.interp(target_alt, altitudes, speeds)
-        fuel_flow_interp = np.interp(target_alt, altitudes, fuels)
+        # Interpolieren zwischen zwei Höhenpunkten
+        lower_alt = max([a for a in cruise_alts if a <= target_alt])
+        upper_alt = min([a for a in cruise_alts if a >= target_alt])
 
-        # Korrekturen für Temperatur
+        def mean_vals(df):
+            return df["KTAS"].mean(), df["Fuel Consumption [l/hr]"].mean()
+
+        ktas_low, fuel_low = mean_vals(cruise_subset[cruise_subset["Pressure Altitude [ft]"] == lower_alt])
+        ktas_high, fuel_high = mean_vals(cruise_subset[cruise_subset["Pressure Altitude [ft]"] == upper_alt])
+
+        ktas_interp = np.interp(target_alt, [lower_alt, upper_alt], [ktas_low, ktas_high])
+        fuel_interp = np.interp(target_alt, [lower_alt, upper_alt], [fuel_low, fuel_high])
+
+        # Temperaturkorrektur
         isa_temp = 15 + (-2 * target_alt / 1000)
         oat_dev = temp_at_alt - isa_temp
         ktas_corr = ktas_interp * (1 + oat_dev * 0.01)
-        fuel_corr = fuel_flow_interp * (1 + oat_dev * 0.025)
+        fuel_corr = fuel_interp * (1 + oat_dev * 0.025)
 
         # Windkorrektur
         gs = ktas_corr - hwc
