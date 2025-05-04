@@ -38,45 +38,46 @@ def calc_wind_component(track, wind_dir, wind_speed):
 
 hwc, cwc = calc_wind_component(track, wind_dir, wind_speed)
 
-# Climb-Interpolation (robust nach zwei nächstliegenden Gewichten)
+# Climb-Interpolation mit Original-CSV (Interpolation über Höhe, Temperatur, Gewicht)
 def interpolate_climb(alt_ft, weight, temp):
-    weights_available = sorted(climb_df["Weight [kg]"].unique())
-    nearest_weights = sorted(weights_available, key=lambda x: abs(x - weight))[:2]
-    results = []
+    climb_df_cleaned = climb_df.copy()
+    climb_df_cleaned["Pressure Altitude [ft]"] = climb_df_cleaned["Pressure Altitude [ft]"].replace("S.L.", 0).astype(int)
+    weights = sorted(climb_df_cleaned["Weight [kg]"].unique())
+    closest_weights = sorted(weights, key=lambda x: abs(x - weight))[:2]
 
-    for w in nearest_weights:
-        df_w = climb_df[climb_df["Weight [kg]"].astype(int) == int(w)]
-        if df_w.empty:
+    temp_cols = [col for col in climb_df_cleaned.columns if col.startswith("Rate @")]
+    temp_vals = [float(col.split("@")[1].replace("°C", "").strip()) for col in temp_cols]
+
+    climb_values = []
+
+    for w in closest_weights:
+        df_w = climb_df_cleaned[climb_df_cleaned["Weight [kg]"] == w].sort_values("Pressure Altitude [ft]")
+        if alt_ft < df_w["Pressure Altitude [ft]"].min() or alt_ft > df_w["Pressure Altitude [ft]"].max():
             continue
 
-        temp_cols = [col for col in df_w.columns if col.startswith("Rate @")]
-        temp_vals = [float(col.split("@")[1].replace("°C", "").strip()) for col in temp_cols]
-        alts = sorted([a for a in df_w["Pressure Altitude [ft]"].dropna().unique() if isinstance(a, (int, float))])
-        if not alts or alt_ft > max(alts):
+        interpolated_roc = []
+        for col in temp_cols:
+            sub = df_w[["Pressure Altitude [ft]", col]].dropna()
+            if len(sub) >= 2:
+                roc = np.interp(alt_ft, sub["Pressure Altitude [ft]"], sub[col])
+                interpolated_roc.append(roc)
+        if len(interpolated_roc) != len(temp_vals):
             continue
 
-        rates = []
-        for tcol in temp_cols:
-            sub = df_w[["Pressure Altitude [ft]", tcol]].dropna()
-            if len(sub) < 2:
-                continue
-            roc = np.interp(alt_ft, sub["Pressure Altitude [ft]"], sub[tcol])
-            rates.append(roc)
-
-        if len(rates) != len(temp_vals):
+        roc_final = np.interp(temp, temp_vals, interpolated_roc)
+        if roc_final <= 0:
             continue
-
-        roc_interp = np.interp(temp, temp_vals, rates)
-        time_hr = alt_ft / roc_interp / 60
+        time_hr = alt_ft / roc_final / 60
         dist_nm = time_hr * 90
         fuel_l = time_hr * 20
-        results.append((w, time_hr, dist_nm, fuel_l))
+        climb_values.append((w, time_hr, dist_nm, fuel_l))
 
-    if len(results) < 2:
+    if len(climb_values) < 2:
         return None, None, None
 
-    w1, t1, d1, f1 = results[0]
-    w2, t2, d2, f2 = results[1]
+    w1, t1, d1, f1 = climb_values[0]
+    w2, t2, d2, f2 = climb_values[1]
+
     climb_time = np.interp(weight, [w1, w2], [t1, t2])
     climb_dist = np.interp(weight, [w1, w2], [d1, d2])
     climb_fuel = np.interp(weight, [w1, w2], [f1, f2])
