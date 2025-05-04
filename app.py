@@ -30,7 +30,13 @@ def interpolate_climb(alt_ft, weight, temp):
     closest_weights = sorted(weights, key=lambda x: abs(x - weight))[:2]
 
     temp_cols = [col for col in climb_df.columns if col.startswith("ROC @")]
-    temp_vals = [float(col.split("@")[1].replace("°C", "").strip()) for col in temp_cols]
+    temp_vals = []
+    for col in temp_cols:
+        try:
+            val = float(col.split("@")[1].replace("°C", "").strip())
+            temp_vals.append(val)
+        except (IndexError, ValueError):
+            continue
 
     climb_values = []
     for w in closest_weights:
