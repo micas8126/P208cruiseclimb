@@ -8,7 +8,7 @@ climb_df = pd.read_csv("tecnam_climb_performance_corrected.csv")
 
 # Hilfsfunktionen
 def interpolate_climb(alt_ft, weight, temp):
-    levels = climb_df["Pressure Altitude [ft]"].unique()
+    levels = pd.to_numeric(climb_df["Pressure Altitude [ft]"], errors='coerce').dropna().unique()
     if alt_ft > max(levels):
         st.error("Zielhöhe außerhalb des gültigen Bereichs der Tabelle.")
         return None, None, None
