@@ -23,10 +23,6 @@ def interpolate_cruise(df, alt_ft, rpm, oat, weight):
         return None, None
     base_speed = np.interp(alt_ft, [lower_alt, upper_alt], [s_low["KTAS"].values[0], s_up["KTAS"].values[0]])
     base_fuel = np.interp(alt_ft, [lower_alt, upper_alt], [s_low["Fuel Consumption [l/hr]"].values[0], s_up["Fuel Consumption [l/hr]"].values[0]])
-    if subset.empty:
-        return None, None
-    base_speed = float(subset["KTAS"].values[0])
-    base_fuel = float(subset["Fuel Consumption [l/hr]"].values[0])
     delta_t = oat - isa_temperature(alt_ft)
     if delta_t >= 0:
         speed = base_speed * (1 - 0.00133 * delta_t)
