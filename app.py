@@ -24,7 +24,7 @@ def interpolate_climb(alt_ft, weight, temp):
     roc_list = []
     for alt in alts:
         group = grouped.get_group(alt)
-        temp_vals = [int(c.replace("°C", "")) for c in group.columns if "@" in c]
+        temp_vals = [int(c.split("@")[1].replace("°C", "").strip()) for c in group.columns if "@" in c]
         if len(temp_vals) == 0:
             continue
         rocs = [np.interp(weight, group["Weight [kg]"], group[f"ROC @{t}°C"]) for t in temp_vals]
