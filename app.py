@@ -64,7 +64,13 @@ def interpolate_climb(alt_ft, weight, temp):
         if len(interpolated_roc) != len(temp_vals):
             continue
 
-        roc_final = np.interp(temp, temp_vals, interpolated_roc)
+        # Nur gültige Paare behalten
+        valid_pairs = [(tv, rv) for tv, rv in zip(temp_vals, interpolated_roc) if not pd.isna(rv)]
+        if len(valid_pairs) < 2:
+            continue
+        tv_vals, rv_vals = zip(*valid_pairs)
+        roc_final = np.interp(temp, tv_vals, rv_vals)
+
         if roc_final <= 0:
             continue
         time_hr = alt_ft / roc_final / 60
@@ -82,65 +88,5 @@ def interpolate_climb(alt_ft, weight, temp):
     climb_dist = np.interp(weight, [w1, w2], [d1, d2])
     climb_fuel = np.interp(weight, [w1, w2], [f1, f2])
 
+    st.write(f"**Interpolierte ROC:** {roc_final:.1f} ft/min")
     return climb_time, climb_dist, climb_fuel
-
-# Cruise-Interpolation über Höhe mit Zwischenwerten
-cruise_subset = cruise_df[cruise_df["Propeller RPM"] == prop_rpm]
-
-if len(cruise_subset) == 0:
-    st.error("Keine passenden Cruise-Daten gefunden. RPM prüfen.")
-else:
-    cruise_grouped = cruise_subset.groupby("Pressure Altitude [ft]")
-    cruise_alts = sorted(cruise_grouped.groups.keys())
-
-    if target_alt < min(cruise_alts) or target_alt > max(cruise_alts):
-        st.error("Zielhöhe außerhalb des gültigen Bereichs der Tabelle.")
-    else:
-        # Interpolieren zwischen zwei Höhenpunkten
-        lower_alt = max([a for a in cruise_alts if a <= target_alt])
-        upper_alt = min([a for a in cruise_alts if a >= target_alt])
-
-        def mean_vals(df):
-            return df["KTAS"].mean(), df["Fuel Consumption [l/hr]"].mean()
-
-        ktas_low, fuel_low = mean_vals(cruise_subset[cruise_subset["Pressure Altitude [ft]"] == lower_alt])
-        ktas_high, fuel_high = mean_vals(cruise_subset[cruise_subset["Pressure Altitude [ft]"] == upper_alt])
-
-        ktas_interp = np.interp(target_alt, [lower_alt, upper_alt], [ktas_low, ktas_high])
-        fuel_interp = np.interp(target_alt, [lower_alt, upper_alt], [fuel_low, fuel_high])
-
-        # Temperaturkorrektur
-        isa_temp = 15 + (-2 * target_alt / 1000)
-        oat_dev = temp_at_alt - isa_temp
-        ktas_corr = ktas_interp * (1 + oat_dev * 0.01)
-        fuel_corr = fuel_interp * (1 + oat_dev * 0.025)
-
-        # Windkorrektur
-        gs = ktas_corr - hwc
-        time_cruise = (total_dist - alt_dist) / gs
-        fuel_cruise = time_cruise * fuel_corr
-
-        # Climb
-        climb_time, climb_dist, climb_fuel = interpolate_climb(alt_diff, weight, temp_surface)
-        if climb_time is None:
-            st.error("Climb-Kalkulation fehlgeschlagen.")
-        else:
-            # Alternate (fix angenommen)
-            alt_ktas = 100
-            alt_fuel = 17
-            time_alt = alt_dist / alt_ktas
-            fuel_alt = time_alt * alt_fuel
-
-            total_fuel = fuel_cruise + climb_fuel + 2 + 1 + additional_fuel + fuel_alt + (45 / 60) * fuel_corr
-            total_time = climb_time + time_cruise + time_alt
-
-            st.success("Ergebnisse")
-            st.write(f"**ISA Temp @ Alt:** {isa_temp:.1f} °C | OAT-Abweichung: {oat_dev:+.1f} °C")
-            st.write(f"**Windkomponente:** {hwc} kt ({'Gegenwind +' if hwc > 0 else 'Rückenwind -'}), Seitenwind: {cwc} kt")
-            st.write(f"**Climb:** {climb_time:.2f} h, {climb_dist:.1f} NM, {climb_fuel:.1f} l")
-            st.write(f"**Cruise GS:** {gs:.1f} kt | Fuel Flow: {fuel_corr:.2f} l/h")
-            st.write(f"**Cruise:** {time_cruise:.2f} h, {(total_dist - alt_dist):.1f} NM, {fuel_cruise:.1f} l")
-            st.write(f"**Alternate:** {time_alt:.2f} h, {alt_dist:.1f} NM, {fuel_alt:.1f} l")
-            st.markdown("---")
-            st.write(f"**Totalzeit:** {total_time:.2f} h")
-            st.write(f"**Totalverbrauch:** {total_fuel:.1f} l")
