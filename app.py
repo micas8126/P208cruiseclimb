@@ -38,9 +38,11 @@ def format_time(hours):
     m = int(round((hours - h) * 60))
     return f"{h}:{m:02d} h"
 
-def wind_component(track, wind_dir, wind_speed):
-    angle = math.radians(track - wind_dir)  # Windrichtung ist woher, also Subtraktion umdrehen
-    return wind_speed * math.cos(angle)
+def wind_components(track, wind_from, wind_speed):
+    angle = math.radians((wind_from - track + 360) % 360)  # Korrekt gerechnet als von-woher
+    headwind = wind_speed * math.cos(angle)
+    crosswind = wind_speed * math.sin(angle)
+    return headwind, crosswind
 
 def interpolate_climb(alt_diff, weight, temp):
     weights = sorted(climb_df["Weight [kg]"].unique())
@@ -127,9 +129,9 @@ else:
             ktas_final = ktas_weight_corr * ktas_corr_percent
             fuel_final = fuel_flow * fuel_corr_percent
 
-            wind_corr = wind_component(tack, wind_dir, wind_speed)
-            wind_type = "(Gegenwind +)" if wind_corr < 0 else "(Rückenwind -)"
-            gs_final = max(ktas_final + wind_corr, 30)
+            headwind, crosswind = wind_components(tack, wind_dir, wind_speed)
+            wind_type = "(Gegenwind +)" if headwind < 0 else "(Rückenwind -)"
+            gs_final = max(ktas_final + headwind, 30)
 
             time_cruise = remaining_distance / gs_final
             fuel_cruise = time_cruise * fuel_final
@@ -157,7 +159,7 @@ else:
 
             st.success("Ergebnisse")
             st.write(f"**ISA Temp @ Alt:** {isa_temp:.1f} °C  |  **OAT-Abweichung:** {isa_dev:+.1f} °C")
-            st.write(f"**Windkomponente:** {wind_corr:.1f} kt {wind_type}")
+            st.write(f"**Windkomponente:** {headwind:.1f} kt {wind_type}, Seitenwind: {crosswind:.1f} kt")
             st.write(f"**Climb:** {format_time(climb_time)}, {climb_dist:.1f} NM, {climb_fuel:.1f} l")
             st.write(f"**Cruise GS:** {gs_final:.1f} kt  |  Fuel Flow: {fuel_final:.2f} l/h")
             st.write(f"**Cruise:** {format_time(time_cruise)}, {fuel_cruise:.1f} l")
