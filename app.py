@@ -45,13 +45,13 @@ def interpolate_climb(alt_ft, weight, temp):
     results = []
 
     for w in nearest_weights:
-        df_w = climb_df[climb_df["Weight [kg]"] == w]
+        df_w = climb_df[climb_df["Weight [kg]"].astype(int) == int(w)]
         if df_w.empty:
             continue
 
         temp_cols = [col for col in df_w.columns if col.startswith("Rate @")]
         temp_vals = [float(col.split("@")[1].replace("°C", "").strip()) for col in temp_cols]
-        alts = sorted(df_w["Pressure Altitude [ft]"].unique())
+        alts = sorted([a for a in df_w["Pressure Altitude [ft]"].dropna().unique() if isinstance(a, (int, float))])
         if not alts or alt_ft > max(alts):
             continue
 
@@ -140,4 +140,3 @@ else:
             st.markdown("---")
             st.write(f"**Totalzeit:** {total_time:.2f} h")
             st.write(f"**Totalverbrauch:** {total_fuel:.1f} l")
-
