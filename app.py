@@ -39,7 +39,7 @@ def format_time(hours):
     return f"{h}:{m:02d} h"
 
 def wind_component(track, wind_dir, wind_speed):
-    angle = math.radians(wind_dir - track)
+    angle = math.radians(track - wind_dir)  # Windrichtung ist woher, also Subtraktion umdrehen
     return wind_speed * math.cos(angle)
 
 def interpolate_climb(alt_diff, weight, temp):
@@ -134,12 +134,10 @@ else:
             time_cruise = remaining_distance / gs_final
             fuel_cruise = time_cruise * fuel_final
 
-            # Fixe Zusatzverbräuche
             fuel_departure = 2.0
             fuel_landing = 1.0
             fuel_reserve = 45 / 60 * fuel_final
 
-            # Alternate Berechnung: 600 kg, 2000 RPM, 4000 ft
             alt_df = df[(df["Propeller RPM"] == 2000) & (df["Pressure Altitude [ft]"] == 4000)]
             if not alt_df.empty:
                 row = alt_df.iloc[0]
