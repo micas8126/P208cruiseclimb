@@ -113,6 +113,8 @@ else:
     st.write(f"**Climb:** {climb_time:.2f} h, {climb_dist:.1f} NM, {climb_fuel:.1f} l")
     st.write(f"**Cruise:** {cruise_time:.2f} h, {cruise_dist:.1f} NM, {cruise_fuel:.1f} l")
     st.write("---")
+    reise_total = fuel_start + fuel_landing + climb_fuel + cruise_fuel
+    st.write(f"**Reise Total (Start + Landung + Climb + Cruise):** {reise_total:.1f} l")
     st.write(f"**Start + Landung:** {fuel_start + fuel_landing:.1f} l")
     st.write(f"**Reserve (45 min @ 650kg/2000RPM/4000ft):** {fuel_reserve:.1f} l")
     st.write(f"**Alternate:** {time_alt:.2f} h, {fuel_alt:.1f} l")
